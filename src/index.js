@@ -57,6 +57,14 @@ async function main() {
     });
   });
 
+  const skipExisting = await new Promise((resolve) => {
+    rl.question('Do you want to skip already downloaded lessons? (yes/no) [no]: ', (answer) => {
+      const normalized = answer.trim().toLowerCase();
+      // Default to false (don't skip existing) if no answer, only true for 'yes'/'y'
+      resolve(normalized === 'yes' || normalized === 'y');
+    });
+  });
+
   // Launch browser in headless mode
   console.log('Launching browser...');
   const browser = await puppeteerExtra.launch({
@@ -210,7 +218,7 @@ async function main() {
 
     // Download transcripts
     console.log('Downloading transcripts...');
-    await downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, tabCount);
+    await downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, tabCount, skipExisting);
 
     console.log('All transcripts have been downloaded successfully!');
   } catch (error) {
@@ -335,7 +343,7 @@ function generateContentsFile(courseStructure, outputDir) {
 }
 
 // Download transcripts
-async function downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, tabCount = 5) {
+async function downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, tabCount = 5, skipExisting = false) {
   const allLectures = [];
 
   // Flatten all lectures into a single list
@@ -366,7 +374,7 @@ async function downloadTranscripts(browser, courseUrl, courseStructure, download
 
     for (let i = 0; i < chunk.length; i++) {
       const { lecture, chapter } = chunk[i];
-      await processLecture(page, courseUrl, lecture, chapter, downloadSrt);
+      await processLecture(page, courseUrl, lecture, chapter, downloadSrt, skipExisting);
     }
 
     await page.close();
@@ -375,7 +383,7 @@ async function downloadTranscripts(browser, courseUrl, courseStructure, download
 }
 
 // Process a single lecture
-async function processLecture(page, courseUrl, lecture, chapter = null, downloadSrt = false) {
+async function processLecture(page, courseUrl, lecture, chapter = null, downloadSrt = false, skipExisting = false) {
   const lectureUrl = `${courseUrl}learn/lecture/${lecture.id}`;
   const filename = chapter ?
     `${chapter.index}.${lecture.lectureIndex} ${lecture.title}` :
@@ -383,6 +391,13 @@ async function processLecture(page, courseUrl, lecture, chapter = null, download
 
   // Sanitize filename by removing invalid characters
   const sanitizedFilename = filename.replace(/[/\\?%*:|"<>]/g, '-');
+
+  // Check if file already exists and skip if it does
+  const outputPath = path.join(__dirname, '../output', `${sanitizedFilename}.txt`);
+  if (skipExisting && fs.existsSync(outputPath)) {
+    console.log(`Skipping lecture (file already exists): ${sanitizedFilename}`);
+    return;
+  }
 
   console.log(`Processing lecture: ${sanitizedFilename}`);
 
