@@ -105,8 +105,8 @@ async function main() {
     await new Promise(resolve => setTimeout(resolve, 3000));
 
     // Fill in the email input
-    await page.waitForSelector('input[name="email"]');
-    await page.type('input[name="email"]', process.env.UDEMY_EMAIL, { delay: 100 });
+    await page.waitForSelector('input[name="Email"]');
+    await page.type('input[name="Email"]', process.env.UDEMY_EMAIL, { delay: 100 });
 
     // Close the cookie bar if it exists
     try {
