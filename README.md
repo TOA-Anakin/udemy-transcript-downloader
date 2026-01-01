@@ -88,3 +88,13 @@ MIT
 ## Disclaimer
 
 This tool is for personal use only. Please respect Udemy's terms of service.
+
+## Tips on Windows
+1. Start vscode with Administrator permission
+2. kill Edge processes by this command `taskkill /f /im msedge.exe`
+3. run `npm start https://metruyencv.com/truyen/van-lan-tra-lai-do-de-truc-co-ta-truc-tiep-thanh-tien`
+4. run `npm run buildHtlm "Vạn Cổ Thần Đế"`
+5. rename output.html, e.g  "mv output.html van-co-than-de-1738.html"
+6. Use Calibre to build epub from html files
+or use Pandoc
+ pandoc .\van-co-than-de-1738.html -o .\van-co-than-de-1738.epub --toc

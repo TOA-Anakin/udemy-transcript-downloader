@@ -1,0 +1,52 @@
+Here’s a summary of all your prompts and the corresponding tasks or solutions provided:
+
+1. Initial Code Context
+You shared the metruyenchu.js file, which is a Puppeteer-based script designed to download content from a website. The script:
+
+Logs into the website.
+Clicks the "Mục Lục" button.
+Extracts chapter links.
+Downloads and saves the content of each chapter.
+2. Modify Script to Use Chrome Browser
+You requested to modify the script to explicitly use the Chrome browser. The solution included:
+
+Setting the executablePath to the Chrome installation path.
+Using the userDataDir option to load your browser profile.
+3. Extract Chapter Number from URL
+You asked for a method to extract the chapter number from a URL. The solution:
+
+Extracted the last segment of the URL.
+Retrieved the string after the last -.
+Example:
+
+4. Modify Script to Use Edge Browser
+You requested to switch the browser from Chrome to Edge. The solution:
+
+Updated the executablePath to point to the Edge installation path.
+Used the userDataDir option to load your Edge profile.
+5. Fix "Failed to Launch the Browser Process!"
+You encountered an error when launching Edge. The solution included:
+
+Verifying the Edge installation path.
+Ensuring Puppeteer and Puppeteer-Extra were up-to-date.
+Adding dumpio: true for debugging.
+Testing without the userDataDir option.
+6. Kill All Edge Browser Processes
+You requested a .cmd script to kill all Edge browser processes. The solution:
+
+7. Replace page.waitForXPath with document.querySelector
+You encountered an issue with page.waitForXPath. The solution:
+
+Replaced page.waitForXPath with page.waitForSelector and document.querySelector.
+Example:
+
+8. Setup launch.json for Debugging in VS Code
+You requested a launch.json configuration to debug the script in VS Code. The solution:
+
+9. General Code Review
+You shared the full metruyenchu.js file, and the script was reviewed for:
+
+Extracting chapter links.
+Downloading content in parallel using multiple tabs.
+Saving content to text files.
+Let me know if you need further clarification or additional help!

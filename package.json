@@ -2,9 +2,10 @@
   "name": "udemy-transcript-downloader",
   "version": "1.0.0",
   "description": "A tool for downloading transcripts from Udemy courses",
-  "main": "src/index.js",
+  "main": "src/metruyenchu.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/metruyenchu.js",
+    "buildHtlm": "node src/buildHtml.js"
   },
   "keywords": [
     "udemy",
@@ -17,7 +18,7 @@
   "license": "MIT",
   "dependencies": {
     "dotenv": "^16.5.0",
-    "puppeteer": "^24.6.1",
+    "puppeteer": "^24.22.3",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   }

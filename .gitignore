@@ -24,3 +24,8 @@ pids
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# download contents
+output/*.txt
+*.html
+Chapter_*.txt

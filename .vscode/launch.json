@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "Launch metruyenchu.js",
+        "skipFiles": ["<node_internals>/**"],
+        "program": "${workspaceFolder}/src/metruyenchu.js",
+        "args": ["https://metruyencv.com/truyen/van-lan-tra-lai-do-de-truc-co-ta-truc-tiep-thanh-tien"], // Replace <book-name> with the actual book name
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "NODE_ENV": "development"
+        }
+      }
+    ]
+  }
