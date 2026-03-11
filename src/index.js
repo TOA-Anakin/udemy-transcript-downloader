@@ -43,24 +43,18 @@ async function main() {
 
   console.log(`Course URL: ${courseUrl}`);
 
-  const downloadSrt = await new Promise((resolve) => {
-    rl.question('Do you want to download transcripts as .srt files with timestamps as well? (yes/no) [no]: ', (answer) => {
-      const normalized = answer.trim().toLowerCase();
-      resolve(normalized === 'yes' || normalized === 'y');
-    });
-  });
+  // Accept --srt and --tabs as CLI flags to avoid interactive prompts
+  const args = process.argv.slice(3);
+  const downloadSrt = args.includes('--srt');
+  const tabsArg = args.find(a => a.startsWith('--tabs='));
+  const tabCount = tabsArg ? parseInt(tabsArg.split('=')[1], 10) : 5;
 
-  const tabCount = await new Promise((resolve) => {
-    rl.question(`How many tabs do you want to use for downloading transcripts? (default is 5) [5]: `, (answer) => {
-      const normalized = answer.trim();
-      resolve(normalized ? parseInt(normalized, 10) : 5);
-    });
-  });
+  console.log(`Download SRT: ${downloadSrt}, Tabs: ${tabCount}`);
 
   // Launch browser in headless mode
   console.log('Launching browser...');
   const browser = await puppeteerExtra.launch({
-    headless: 'new', // Use the new headless mode
+    headless: false, // Use headed mode so user can see the browser
     defaultViewport: null,
     args: [
       '--window-size=1280,720',
@@ -127,13 +121,30 @@ async function main() {
     await page.$eval('[data-purpose="code-generation-form"] [type="submit"]', element => element.click());
     console.log('Email submitted, waiting for verification code...');
 
-    // Ask user for verification code in terminal
-    console.log('You have 5 minutes to enter the verification code before the program times out.');
-    const verificationCode = await new Promise((resolve) => {
-      rl.question('Please enter the 6-digit verification code from your email: ', (code) => {
-        resolve(code.trim());
-      });
-    });
+    // Wait for verification code via file polling
+    const codeFile = path.join(__dirname, '../verification_code.txt');
+    // Remove old code file if it exists
+    if (fs.existsSync(codeFile)) fs.unlinkSync(codeFile);
+    console.log('=== CHECK YOUR EMAIL for the 6-digit verification code ===');
+    console.log(`Then create the file: verification_code.txt with just the code`);
+    console.log('Polling for verification_code.txt ...');
+
+    let verificationCode = '';
+    const startTime = Date.now();
+    while (Date.now() - startTime < 300000) { // 5 min timeout
+      if (fs.existsSync(codeFile)) {
+        verificationCode = fs.readFileSync(codeFile, 'utf8').trim();
+        if (verificationCode.length >= 6) {
+          console.log(`Got verification code: ${verificationCode}`);
+          fs.unlinkSync(codeFile); // clean up
+          break;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000)); // poll every second
+    }
+    if (!verificationCode) {
+      throw new Error('Verification code timeout - no code provided within 5 minutes');
+    }
 
     // Fill in the verification code
     await page.waitForSelector('[data-purpose="otp-text-area"] input', { timeout: 60000 });
@@ -163,42 +174,59 @@ async function main() {
 
     console.log(`Course ID: ${courseId}`);
 
-    // Fetch course content
+    // Fetch course content (with pagination)
     console.log('Fetching course content...');
-    const apiUrl = `https://www.udemy.com/api-2.0/courses/${courseId}/subscriber-curriculum-items/?page_size=200&fields%5Blecture%5D=title,object_index,is_published,sort_order,created,asset,supplementary_assets,is_free&fields%5Bquiz%5D=title,object_index,is_published,sort_order,type&fields%5Bpractice%5D=title,object_index,is_published,sort_order&fields%5Bchapter%5D=title,object_index,is_published,sort_order&fields%5Basset%5D=title,filename,asset_type,status,time_estimation,is_external,transcript,captions&caching_intent=True`;
+    const baseApiUrl = `https://www.udemy.com/api-2.0/courses/${courseId}/subscriber-curriculum-items/?page_size=200&fields%5Blecture%5D=title,object_index,is_published,sort_order,created,asset,supplementary_assets,is_free&fields%5Bquiz%5D=title,object_index,is_published,sort_order,type&fields%5Bpractice%5D=title,object_index,is_published,sort_order&fields%5Bchapter%5D=title,object_index,is_published,sort_order&fields%5Basset%5D=title,filename,asset_type,status,time_estimation,is_external,transcript,captions&caching_intent=True`;
 
-    let courseJson = null;
-    const maxAttempts = 3;
+    let allResults = [];
+    let nextUrl = baseApiUrl;
+    let pageNum = 1;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      console.log(`Attempt ${attempt} to fetch course content...`);
-      try {
-        await page.goto(apiUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-        await new Promise(resolve => setTimeout(resolve, 2000));
+    while (nextUrl) {
+      console.log(`Fetching page ${pageNum}...`);
+      let courseJson = null;
+      const maxAttempts = 3;
 
-        const rawBody = await page.evaluate(() => document.body.innerText);
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        console.log(`Attempt ${attempt} to fetch course content (page ${pageNum})...`);
+        try {
+          await page.goto(nextUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+          await new Promise(resolve => setTimeout(resolve, 2000));
 
-        if (rawBody.trim().startsWith('<!DOCTYPE html>')) {
-          throw new Error('HTML response received instead of JSON');
-        }
+          const rawBody = await page.evaluate(() => document.body.innerText);
 
-        courseJson = JSON.parse(rawBody);
+          if (rawBody.trim().startsWith('<!DOCTYPE html>')) {
+            throw new Error('HTML response received instead of JSON');
+          }
 
-        if (courseJson && courseJson.results) {
-          break; // success
-        } else {
-          throw new Error('JSON parsed but no results key found');
-        }
-      } catch (err) {
-        console.warn(`[Attempt ${attempt}] Failed to fetch course content: ${err.message}`);
-        if (attempt < maxAttempts) {
-          console.log('Retrying in 5 seconds...');
-          await new Promise(resolve => setTimeout(resolve, 5000));
-        } else {
-          throw new Error('Could not retrieve course content. Make sure you have access to this course and try again.');
+          courseJson = JSON.parse(rawBody);
+
+          if (courseJson && courseJson.results) {
+            break; // success
+          } else {
+            throw new Error('JSON parsed but no results key found');
+          }
+        } catch (err) {
+          console.warn(`[Attempt ${attempt}] Failed to fetch course content: ${err.message}`);
+          if (attempt < maxAttempts) {
+            console.log('Retrying in 5 seconds...');
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } else {
+            throw new Error('Could not retrieve course content. Make sure you have access to this course and try again.');
+          }
         }
       }
+
+      allResults = allResults.concat(courseJson.results);
+      console.log(`Page ${pageNum}: got ${courseJson.results.length} items (total: ${allResults.length})`);
+
+      // Check for next page
+      nextUrl = courseJson.next || null;
+      pageNum++;
     }
+
+    const courseJson = { results: allResults };
+    console.log(`Total curriculum items fetched: ${allResults.length}`);
 
     // Process course structure
     console.log('Processing course structure...');
