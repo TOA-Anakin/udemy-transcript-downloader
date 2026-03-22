@@ -18,11 +18,13 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-// Create output directory if it doesn't exist
+// Create output directories if they don't exist
 const outputDir = path.join(__dirname, '../output');
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir, { recursive: true });
-}
+const txtDir = path.join(outputDir, 'txt');
+const srtDir = path.join(outputDir, 'srt');
+if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+if (!fs.existsSync(txtDir)) fs.mkdirSync(txtDir, { recursive: true });
+if (!fs.existsSync(srtDir)) fs.mkdirSync(srtDir, { recursive: true });
 
 // Main function
 async function main() {
@@ -69,7 +71,7 @@ async function main() {
       '--disable-dev-shm-usage',
       '--disable-setuid-sandbox'
     ],
-    protocolTimeout: 300000
+    protocolTimeout: 600000 // 10 min to avoid Runtime.callFunctionOn timeout on slow pages
   });
 
   try {
@@ -334,8 +336,24 @@ function generateContentsFile(courseStructure, outputDir) {
   console.log('CONTENTS.txt has been created successfully!');
 }
 
+// Check if lecture is already downloaded (helper for filtering)
+function isLectureDownloaded(lecture, chapter, downloadSrt, txtDir, srtDir) {
+  const filename = chapter ?
+    `${chapter.index}.${lecture.lectureIndex} ${lecture.title}` :
+    `${lecture.lectureIndex}. ${lecture.title}`;
+  const sanitizedFilename = filename.replace(/[/\\?%*:|"<>]/g, '-');
+  const txtPath = path.join(txtDir, `${sanitizedFilename}.txt`);
+  if (!fs.existsSync(txtPath)) return false;
+  const content = fs.readFileSync(txtPath, 'utf8');
+  if (content.includes('[No transcript available or could not be accessed]') || content.trim().length <= 100) return false;
+  if (!downloadSrt) return true;
+  const files = fs.readdirSync(srtDir);
+  return files.some(f => f.startsWith(sanitizedFilename) && f.endsWith('.srt'));
+}
+
 // Download transcripts
 async function downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, tabCount = 5) {
+  const outputDir = path.join(__dirname, '../output');
   const allLectures = [];
 
   // Flatten all lectures into a single list
@@ -348,6 +366,22 @@ async function downloadTranscripts(browser, courseUrl, courseStructure, download
     allLectures.push({ lecture, chapter: null });
   }
 
+  // Filter to only missing lectures
+  const txtDir = path.join(outputDir, 'txt');
+  const srtDir = path.join(outputDir, 'srt');
+  const toProcess = allLectures.filter(({ lecture, chapter }) => !isLectureDownloaded(lecture, chapter, downloadSrt, txtDir, srtDir));
+  const skipped = allLectures.length - toProcess.length;
+  if (skipped > 0) {
+    console.log(`Skipping ${skipped} already downloaded, processing ${toProcess.length} missing...`);
+  }
+  if (toProcess.length === 0) {
+    console.log('All transcripts already downloaded.');
+    return;
+  }
+
+  // Use 1 tab when few lectures remain (more stable, avoids timeouts)
+  const effectiveTabCount = toProcess.length <= 5 ? 1 : Math.min(tabCount, toProcess.length);
+
   // Split into chunks
   function chunkArray(arr, chunkCount) {
     const chunks = Array.from({ length: chunkCount }, () => []);
@@ -357,16 +391,17 @@ async function downloadTranscripts(browser, courseUrl, courseStructure, download
     return chunks;
   }
 
-  const chunks = chunkArray(allLectures, tabCount);
+  const chunks = chunkArray(toProcess, effectiveTabCount);
 
   // Launch tabs and process in parallel
   await Promise.all(chunks.map(async (chunk, tabIndex) => {
     const page = await browser.newPage();
+    page.setDefaultTimeout(90000); // 90s per operation to avoid evaluate timeouts
     console.log(`Tab ${tabIndex + 1} processing ${chunk.length} lectures...`);
 
     for (let i = 0; i < chunk.length; i++) {
       const { lecture, chapter } = chunk[i];
-      await processLecture(page, courseUrl, lecture, chapter, downloadSrt);
+      await processLecture(page, courseUrl, lecture, chapter, downloadSrt, txtDir, srtDir);
     }
 
     await page.close();
@@ -375,7 +410,7 @@ async function downloadTranscripts(browser, courseUrl, courseStructure, download
 }
 
 // Process a single lecture
-async function processLecture(page, courseUrl, lecture, chapter = null, downloadSrt = false) {
+async function processLecture(page, courseUrl, lecture, chapter = null, downloadSrt = false, txtDir = null, srtDir = null) {
   const lectureUrl = `${courseUrl}learn/lecture/${lecture.id}`;
   const filename = chapter ?
     `${chapter.index}.${lecture.lectureIndex} ${lecture.title}` :
@@ -383,6 +418,26 @@ async function processLecture(page, courseUrl, lecture, chapter = null, download
 
   // Sanitize filename by removing invalid characters
   const sanitizedFilename = filename.replace(/[/\\?%*:|"<>]/g, '-');
+  const dir = txtDir || path.join(__dirname, '../output/txt');
+  const sDir = srtDir || path.join(__dirname, '../output/srt');
+  const txtPath = path.join(dir, `${sanitizedFilename}.txt`);
+
+  // Skip if already downloaded (valid transcript + SRT if requested)
+  if (fs.existsSync(txtPath)) {
+    const content = fs.readFileSync(txtPath, 'utf8');
+    const isPlaceholder = content.includes('[No transcript available or could not be accessed]');
+    if (!isPlaceholder && content.trim().length > 100) {
+      let srtExists = false;
+      if (downloadSrt) {
+        const files = fs.readdirSync(sDir);
+        srtExists = files.some(f => f.startsWith(sanitizedFilename) && f.endsWith('.srt'));
+      }
+      if (!downloadSrt || srtExists) {
+        console.log(`Skipping (already downloaded): ${sanitizedFilename}`);
+        return;
+      }
+    }
+  }
 
   console.log(`Processing lecture: ${sanitizedFilename}`);
 
@@ -457,7 +512,7 @@ async function processLecture(page, courseUrl, lecture, chapter = null, download
     if (!transcriptButtonFound) {
       console.log(`No transcript button found/clicked successfully for lecture: ${lecture.title}. This lecture might not have a transcript.`);
       // Create a placeholder file
-      fs.writeFileSync(path.join(__dirname, '../output', `${sanitizedFilename}.txt`),
+      fs.writeFileSync(path.join(dir, `${sanitizedFilename}.txt`),
         `# ${sanitizedFilename}\n\n[No transcript available or could not be accessed]`, 'utf8');
       console.log(`Created placeholder file for: ${sanitizedFilename}`);
       return;
@@ -495,7 +550,7 @@ async function processLecture(page, courseUrl, lecture, chapter = null, download
     const fileContent = `# ${sanitizedFilename}\n\n${transcriptText}`;
 
     // Write to file
-    fs.writeFileSync(path.join(__dirname, '../output', `${sanitizedFilename}.txt`), fileContent, 'utf8');
+    fs.writeFileSync(path.join(dir, `${sanitizedFilename}.txt`), fileContent, 'utf8');
     console.log(`Transcript saved for: ${sanitizedFilename}`);
 
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -511,7 +566,7 @@ async function processLecture(page, courseUrl, lecture, chapter = null, download
 
           const srtContent = convertVttToSrt(vttContent);
           const langTag = caption.locale_id || 'unknown';
-          const srtPath = path.join(__dirname, '../output', `${sanitizedFilename} [${langTag}].srt`);
+          const srtPath = path.join(sDir, `${sanitizedFilename} [${langTag}].srt`);
           fs.writeFileSync(srtPath, srtContent, 'utf8');
           console.log(`SRT saved: ${sanitizedFilename} [${langTag}]`);
         } catch (err) {

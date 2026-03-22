@@ -8,6 +8,7 @@ A NodeJS-based tool for downloading transcripts from Udemy courses. This script 
 - Creates individual transcript files for each lecture
 - Generates a combined transcript file with all lectures
 - Optionally downloads `.srt` files with timestamps for each lecture
+- Resumes by skipping already-downloaded lectures (incremental runs)
 - Scrapes and saves course content structure
 - Supports email-based authentication with verification code
 - Handles Cloudflare security challenges
@@ -70,8 +71,19 @@ The script will:
 All output files are saved to the `output` directory:
 
 - `CONTENTS.txt` - Course structure with sections and lectures
-- `[Lecture Name].txt` - Individual transcript files for each lecture
-- `[Lecture Name].srt` - Individual transcript files with timestamps in SubRip format (optional)
+- `txt/[Lecture Name].txt` - Individual transcript files for each lecture
+- `srt/[Lecture Name] [en_US].srt` - Individual transcript files with timestamps in SubRip format (optional)
+
+**Resume / incremental downloads**: The script skips lectures that already have a valid transcript. Re-running after an interrupt will only download missing lectures.
+
+**Migration from older layout**: If you previously used a version that saved `.txt` and `.srt` files directly in `output/`, move them into subfolders so the resume logic works:
+```bash
+cd output
+mkdir -p txt srt
+mv *.txt txt/ 2>/dev/null
+mv *.srt srt/ 2>/dev/null
+```
+Leave `CONTENTS.txt` in the `output/` root.
 
 ## Troubleshooting
 
