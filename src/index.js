@@ -61,6 +61,9 @@ async function main() {
   console.log('Launching browser...');
   const browser = await puppeteerExtra.launch({
     headless: 'new', // Use the new headless mode
+    // Use a specific browser binary if provided (e.g. a locally installed,
+    // properly-signed Chrome/Brave); otherwise fall back to Puppeteer's bundled browser.
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     defaultViewport: null,
     args: [
       '--window-size=1280,720',
