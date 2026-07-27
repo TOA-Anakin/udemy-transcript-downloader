@@ -7,6 +7,7 @@ A NodeJS-based tool for downloading transcripts from Udemy courses. This script 
 - Downloads transcripts from any Udemy course you have access to
 - Creates individual transcript files for each lecture
 - Generates a combined transcript file with all lectures
+- Optionally includes `[MM:SS]` timestamps in the transcript `.txt` files
 - Optionally downloads `.srt` files with timestamps for each lecture
 - Scrapes and saves course content structure
 - Supports email-based authentication with verification code
@@ -54,23 +55,25 @@ node src/index.js "https://www.udemy.com/course/your-course-url/"
 The script will:
 
 1. Ask if you want to download `.srt` files (with timestamps) for each lecture
-2. Ask how many tabs to use for downloading transcripts (default is 5)
+2. Ask if you want to include timestamps in the transcript `.txt` files
+   - Timestamps are taken from the lecture's caption track (English preferred). If a lecture has no captions, the transcript is saved without timestamps.
+3. Ask how many tabs to use for downloading transcripts (default is 5)
    - A higher number can speed things up, but requires a good PC (enough CPU and RAM)
-3. Open a headless browser and navigate to Udemy login
-4. Fill in your email from the .env file
-5. Ask you to enter the 6-digit verification code from your email
-6. Navigate to the course page
-7. Scrape course content structure
-8. Enter the course player
-9. Go through each lecture and download available transcripts
-10. Save individual transcript files in the `output` directory
+4. Open a headless browser and navigate to Udemy login
+5. Fill in your email from the .env file
+6. Ask you to enter the 6-digit verification code from your email
+7. Navigate to the course page
+8. Scrape course content structure
+9. Enter the course player
+10. Go through each lecture and download available transcripts
+11. Save individual transcript files in the `output` directory
 
 ## Output Files
 
 All output files are saved to the `output` directory:
 
 - `CONTENTS.txt` - Course structure with sections and lectures
-- `[Lecture Name].txt` - Individual transcript files for each lecture
+- `[Lecture Name].txt` - Individual transcript files for each lecture, with optional `[MM:SS]` timestamps per line
 - `[Lecture Name].srt` - Individual transcript files with timestamps in SubRip format (optional)
 
 ## Troubleshooting

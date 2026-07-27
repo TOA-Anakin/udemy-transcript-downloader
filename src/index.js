@@ -50,6 +50,13 @@ async function main() {
     });
   });
 
+  const includeTimings = await new Promise((resolve) => {
+    rl.question('Do you want to include timestamps in the transcript .txt files? (yes/no) [no]: ', (answer) => {
+      const normalized = answer.trim().toLowerCase();
+      resolve(normalized === 'yes' || normalized === 'y');
+    });
+  });
+
   const tabCount = await new Promise((resolve) => {
     rl.question(`How many tabs do you want to use for downloading transcripts? (default is 5) [5]: `, (answer) => {
       const normalized = answer.trim();
@@ -210,7 +217,7 @@ async function main() {
 
     // Download transcripts
     console.log('Downloading transcripts...');
-    await downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, tabCount);
+    await downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, includeTimings, tabCount);
 
     console.log('All transcripts have been downloaded successfully!');
   } catch (error) {
@@ -291,18 +298,86 @@ function normalizeTimestamp(ts) {
 // Convert VTT content to SRT format
 function convertVttToSrt(vtt) {
   return vtt
-    .replace(/^WEBVTT(\n|\r|\r\n)?/, '')
+    .replace(/^WEBVTT.*(\r?\n)?/, '')
     .trim()
-    .split(/\n{2,}/)
-    .map((block, i) => {
-      const lines = block.trim().split('\n');
-      if (lines.length < 2) return null;
-      const [startEnd, ...textLines] = lines;
-      const [start, end] = startEnd.split(' --> ').map(normalizeTimestamp);
-      return `${i + 1}\n${start} --> ${end}\n${textLines.join('\n')}\n`;
+    .split(/\r?\n\s*\r?\n/)
+    .map(block => {
+      // A cue block may start with an optional identifier line; locate the
+      // timing line instead of assuming it comes first
+      const lines = block.trim().split(/\r?\n/);
+      const timingIndex = lines.findIndex(line => line.includes('-->'));
+      if (timingIndex === -1) return null;
+
+      // Strip cue settings (e.g. "align:start") that can follow the end time
+      const [start, end] = lines[timingIndex]
+        .split('-->')
+        .map(part => part.trim().split(/\s+/)[0])
+        .map(normalizeTimestamp);
+
+      const textLines = lines.slice(timingIndex + 1);
+      if (!start || !end || textLines.length === 0) return null;
+
+      return { start, end, text: textLines.join('\n') };
     })
     .filter(Boolean)
+    .map((cue, i) => `${i + 1}\n${cue.start} --> ${cue.end}\n${cue.text}\n`)
     .join('\n');
+}
+
+// Parse VTT content into cues with a start time and plain text
+function parseVttCues(vtt) {
+  return vtt
+    .replace(/^WEBVTT.*(\r?\n)?/, '')
+    .trim()
+    .split(/\r?\n\s*\r?\n/)
+    .map(block => {
+      const lines = block.trim().split(/\r?\n/);
+      const timingIndex = lines.findIndex(line => line.includes('-->'));
+      if (timingIndex === -1) return null;
+
+      const start = lines[timingIndex].split('-->')[0].trim();
+      const text = lines.slice(timingIndex + 1)
+        .join(' ')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+
+      if (!text) return null;
+      return { start, text };
+    })
+    .filter(Boolean);
+}
+
+// Format a VTT cue start time for the transcript: [MM:SS], or [HH:MM:SS] for videos over an hour
+function formatCueTimestamp(ts) {
+  const [main] = ts.split('.');
+  const parts = main.split(':');
+
+  while (parts.length < 3) {
+    parts.unshift('00');
+  }
+
+  const [hours, minutes, seconds] = parts.map(p => p.padStart(2, '0'));
+  return hours === '00' ? `${minutes}:${seconds}` : `${hours}:${minutes}:${seconds}`;
+}
+
+// Pick the caption track used for the timed transcript (prefer English, otherwise the first one)
+function pickTranscriptCaption(captions) {
+  if (!Array.isArray(captions) || captions.length === 0) {
+    return null;
+  }
+
+  return captions.find(c => typeof c.locale_id === 'string' && c.locale_id.toLowerCase().startsWith('en')) || captions[0];
+}
+
+// Fetch a caption VTT file from within the page context (uses the page's session cookies)
+async function fetchCaptionVtt(page, url) {
+  return page.evaluate(async (captionUrl) => {
+    const res = await fetch(captionUrl);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return await res.text();
+  }, url);
 }
 
 // Generate CONTENTS.txt file
@@ -335,7 +410,7 @@ function generateContentsFile(courseStructure, outputDir) {
 }
 
 // Download transcripts
-async function downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, tabCount = 5) {
+async function downloadTranscripts(browser, courseUrl, courseStructure, downloadSrt, includeTimings, tabCount = 5) {
   const allLectures = [];
 
   // Flatten all lectures into a single list
@@ -366,7 +441,7 @@ async function downloadTranscripts(browser, courseUrl, courseStructure, download
 
     for (let i = 0; i < chunk.length; i++) {
       const { lecture, chapter } = chunk[i];
-      await processLecture(page, courseUrl, lecture, chapter, downloadSrt);
+      await processLecture(page, courseUrl, lecture, chapter, downloadSrt, includeTimings);
     }
 
     await page.close();
@@ -375,7 +450,7 @@ async function downloadTranscripts(browser, courseUrl, courseStructure, download
 }
 
 // Process a single lecture
-async function processLecture(page, courseUrl, lecture, chapter = null, downloadSrt = false) {
+async function processLecture(page, courseUrl, lecture, chapter = null, downloadSrt = false, includeTimings = false) {
   const lectureUrl = `${courseUrl}learn/lecture/${lecture.id}`;
   const filename = chapter ?
     `${chapter.index}.${lecture.lectureIndex} ${lecture.title}` :
@@ -404,111 +479,141 @@ async function processLecture(page, courseUrl, lecture, chapter = null, download
     // Additional delay to ensure page is fully loaded
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Try multiple approaches to find the transcript toggle button
-    const transcriptButtonSelectors = [
-      'button[data-purpose="transcript-toggle"]',
-      '[data-purpose="transcript-toggle"]',
-      'button:has-text("Transcript")',
-      '.transcript-toggle', // Additional potential class name
-      '[aria-label*="transcript" i]', // Any element with transcript in aria-label
-      'button[aria-label*="transcript" i]' // Button with transcript in aria-label
-    ];
+    // Build the transcript from the caption file when timestamps are requested,
+    // since the transcript panel does not expose cue timings
+    let transcriptSaved = false;
 
-    let transcriptButtonFound = false;
+    if (includeTimings) {
+      const caption = pickTranscriptCaption(lecture.captions);
 
-    for (const selector of transcriptButtonSelectors) {
-      try {
-        // Check if button exists
-        const buttonExists = await page.evaluate((sel) => {
-          const element = document.querySelector(sel);
-          return !!element;
-        }, selector);
+      if (caption) {
+        try {
+          const vttContent = await fetchCaptionVtt(page, caption.url);
+          const cues = parseVttCues(vttContent);
 
-        if (buttonExists) {
-          console.log(`Found transcript button using selector: ${selector}`);
-
-          // Use the direct JavaScript click method
-          await page.$eval(selector, element => element.click());
-          console.log(`Clicked transcript button using JavaScript method`);
-
-          // Wait a moment for the click to take effect
-          await new Promise(resolve => setTimeout(resolve, 1500));
-
-          // Check if panel appeared
-          const isPanelVisible = await page.evaluate(() => {
-            const panel = document.querySelector('[data-purpose="transcript-panel"]');
-            return panel && panel.offsetParent !== null;
-          });
-
-          if (isPanelVisible) {
-            console.log('Transcript panel successfully opened');
-            transcriptButtonFound = true;
-            break;
-          } else {
-            console.log('Button clicked but panel did not appear, trying next selector');
+          if (cues.length === 0) {
+            throw new Error('no cues found in caption file');
           }
+
+          const timedTranscript = cues
+            .map(cue => `[${formatCueTimestamp(cue.start)}] ${cue.text}`)
+            .join('\n');
+
+          fs.writeFileSync(path.join(__dirname, '../output', `${sanitizedFilename}.txt`),
+            `# ${sanitizedFilename}\n\n${timedTranscript}`, 'utf8');
+          console.log(`Timed transcript saved for: ${sanitizedFilename} [${caption.locale_id || 'unknown'}]`);
+          transcriptSaved = true;
+        } catch (err) {
+          console.log(`Could not build timed transcript for ${sanitizedFilename}: ${err.message}. Falling back to the transcript panel (no timestamps).`);
         }
-      } catch (error) {
-        console.log(`Error with selector ${selector}: ${error.message}`);
-        continue;
+      } else {
+        console.log(`No captions available for ${sanitizedFilename}. Falling back to the transcript panel (no timestamps).`);
       }
     }
 
-    if (!transcriptButtonFound) {
-      console.log(`No transcript button found/clicked successfully for lecture: ${lecture.title}. This lecture might not have a transcript.`);
-      // Create a placeholder file
-      fs.writeFileSync(path.join(__dirname, '../output', `${sanitizedFilename}.txt`),
-        `# ${sanitizedFilename}\n\n[No transcript available or could not be accessed]`, 'utf8');
-      console.log(`Created placeholder file for: ${sanitizedFilename}`);
-      return;
-    }
+    if (!transcriptSaved) {
+      // Try multiple approaches to find the transcript toggle button
+      const transcriptButtonSelectors = [
+        'button[data-purpose="transcript-toggle"]',
+        '[data-purpose="transcript-toggle"]',
+        'button:has-text("Transcript")',
+        '.transcript-toggle', // Additional potential class name
+        '[aria-label*="transcript" i]', // Any element with transcript in aria-label
+        'button[aria-label*="transcript" i]' // Button with transcript in aria-label
+      ];
 
-    // Additional delay to ensure transcript panel is fully loaded
-    await new Promise(resolve => setTimeout(resolve, 2000));
+      let transcriptButtonFound = false;
 
-    // Extract transcript text with retry logic
-    let transcriptText = '';
-    let retries = 0;
-    const maxRetries = 3;
+      for (const selector of transcriptButtonSelectors) {
+        try {
+          // Check if button exists
+          const buttonExists = await page.evaluate((sel) => {
+            const element = document.querySelector(sel);
+            return !!element;
+          }, selector);
 
-    while (retries < maxRetries) {
-      transcriptText = await page.evaluate(() => {
-        const panel = document.querySelector('[data-purpose="transcript-panel"]');
-        return panel ? panel.textContent : '';
-      });
+          if (buttonExists) {
+            console.log(`Found transcript button using selector: ${selector}`);
 
-      if (transcriptText && transcriptText.trim() !== '') {
-        break;
+            // Use the direct JavaScript click method
+            await page.$eval(selector, element => element.click());
+            console.log(`Clicked transcript button using JavaScript method`);
+
+            // Wait a moment for the click to take effect
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            // Check if panel appeared
+            const isPanelVisible = await page.evaluate(() => {
+              const panel = document.querySelector('[data-purpose="transcript-panel"]');
+              return panel && panel.offsetParent !== null;
+            });
+
+            if (isPanelVisible) {
+              console.log('Transcript panel successfully opened');
+              transcriptButtonFound = true;
+              break;
+            } else {
+              console.log('Button clicked but panel did not appear, trying next selector');
+            }
+          }
+        } catch (error) {
+          console.log(`Error with selector ${selector}: ${error.message}`);
+          continue;
+        }
       }
 
-      console.log(`Retry ${retries + 1}/${maxRetries} to get transcript...`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      retries++;
+      if (!transcriptButtonFound) {
+        console.log(`No transcript button found/clicked successfully for lecture: ${lecture.title}. This lecture might not have a transcript.`);
+        // Create a placeholder file
+        fs.writeFileSync(path.join(__dirname, '../output', `${sanitizedFilename}.txt`),
+          `# ${sanitizedFilename}\n\n[No transcript available or could not be accessed]`, 'utf8');
+        console.log(`Created placeholder file for: ${sanitizedFilename}`);
+        return;
+      }
+
+      // Additional delay to ensure transcript panel is fully loaded
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Extract transcript text with retry logic
+      let transcriptText = '';
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries < maxRetries) {
+        transcriptText = await page.evaluate(() => {
+          const panel = document.querySelector('[data-purpose="transcript-panel"]');
+          return panel ? panel.textContent : '';
+        });
+
+        if (transcriptText && transcriptText.trim() !== '') {
+          break;
+        }
+
+        console.log(`Retry ${retries + 1}/${maxRetries} to get transcript...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        retries++;
+      }
+
+      if (!transcriptText || transcriptText.trim() === '') {
+        console.log(`No transcript content available for lecture: ${lecture.title}`);
+        return;
+      }
+
+      // Create file content
+      const fileContent = `# ${sanitizedFilename}\n\n${transcriptText}`;
+
+      // Write to file
+      fs.writeFileSync(path.join(__dirname, '../output', `${sanitizedFilename}.txt`), fileContent, 'utf8');
+      console.log(`Transcript saved for: ${sanitizedFilename}`);
+
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
-
-    if (!transcriptText || transcriptText.trim() === '') {
-      console.log(`No transcript content available for lecture: ${lecture.title}`);
-      return;
-    }
-
-    // Create file content
-    const fileContent = `# ${sanitizedFilename}\n\n${transcriptText}`;
-
-    // Write to file
-    fs.writeFileSync(path.join(__dirname, '../output', `${sanitizedFilename}.txt`), fileContent, 'utf8');
-    console.log(`Transcript saved for: ${sanitizedFilename}`);
-
-    await new Promise(resolve => setTimeout(resolve, 500));
 
     // Optional: Download SRT files if captions are available
     if (downloadSrt && Array.isArray(lecture.captions) && lecture.captions.length > 0) {
       for (const caption of lecture.captions) {
         try {
-          const vttContent = await page.evaluate(async (url) => {
-            const res = await fetch(url);
-            return await res.text();
-          }, caption.url);
-
+          const vttContent = await fetchCaptionVtt(page, caption.url);
           const srtContent = convertVttToSrt(vttContent);
           const langTag = caption.locale_id || 'unknown';
           const srtPath = path.join(__dirname, '../output', `${sanitizedFilename} [${langTag}].srt`);
