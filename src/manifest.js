@@ -16,9 +16,13 @@ function manifestPath(outputDir, courseId) {
 function loadOrCreate(outputDir, courseId, lectureList) {
   const p = manifestPath(outputDir, courseId);
   if (fs.existsSync(p)) {
-    const existing = JSON.parse(fs.readFileSync(p, 'utf8'));
-    console.log(`Loaded existing manifest (${existing.lectures.length} lectures).`);
-    return existing;
+    try {
+      const existing = JSON.parse(fs.readFileSync(p, 'utf8'));
+      console.log(`Loaded existing manifest (${existing.lectures.length} lectures).`);
+      return existing;
+    } catch (_) {
+      console.warn(`Warning: manifest.json is corrupt or unreadable — starting fresh. Delete output/${courseId}/manifest.json to suppress this warning.`);
+    }
   }
   const manifest = { courseId, lectures: lectureList.map(l => ({ ...l, status: 'pending' })) };
   save(outputDir, manifest);
@@ -31,6 +35,7 @@ function save(outputDir, manifest) {
   const p = manifestPath(outputDir, manifest.courseId);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = p + '.tmp';
+  // ponytail: assumes single-writer; parallel callers need serialised saves
   fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2), 'utf8');
   fs.renameSync(tmp, p);
 }
