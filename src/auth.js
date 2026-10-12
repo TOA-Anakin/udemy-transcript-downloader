@@ -1,7 +1,6 @@
 // src/auth.js
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const readline = require('node:readline');
 
 puppeteerExtra.use(StealthPlugin());
 
@@ -11,11 +10,10 @@ function ask(rl, question) {
 
 /**
  * Launch browser, complete login, extract cookies, close browser.
- * @param {{ email: string, isEnterprise: boolean, udemyBase: string }} opts
+ * @param {{ email: string, isEnterprise: boolean, udemyBase: string, rl: import('readline').Interface }} opts
  * @returns {Promise<string>} Cookie header string for use in HTTP requests
  */
-async function loginAndGetCookies({ email, isEnterprise, udemyBase }) {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+async function loginAndGetCookies({ email, isEnterprise, udemyBase, rl }) {
 
   const browser = await puppeteerExtra.launch({
     headless: false,
@@ -87,7 +85,6 @@ async function loginAndGetCookies({ email, isEnterprise, udemyBase }) {
     return cookieHeader;
   } finally {
     await browser.close();
-    rl.close();
   }
 }
 

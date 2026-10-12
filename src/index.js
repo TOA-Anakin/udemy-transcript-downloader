@@ -37,43 +37,47 @@ async function main() {
   }
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const startFrom = await new Promise(resolve =>
-    rl.question('Start from which lecture index? (default 1) [1]: ', ans => {
-      rl.close();
-      resolve(ans.trim() ? parseInt(ans.trim(), 10) : 1);
-    })
-  );
 
-  console.log('Launching browser for login...');
-  const cookieHeader = await loginAndGetCookies({ email, isEnterprise, udemyBase });
-  console.log('Browser closed. Fetching course data...');
+  try {
+    const startFrom = await new Promise(resolve =>
+      rl.question('Start from which lecture index? (default 1) [1]: ', ans => {
+        resolve(ans.trim() ? parseInt(ans.trim(), 10) : 1);
+      })
+    );
 
-  const courseId = await extractCourseId(courseUrl, cookieHeader);
-  console.log(`Course ID: ${courseId}`);
+    console.log('Launching browser for login...');
+    const cookieHeader = await loginAndGetCookies({ email, isEnterprise, udemyBase, rl });
+    console.log('Browser closed. Fetching course data...');
 
-  const lectureList = await fetchCurriculum(udemyBase, courseId, cookieHeader);
-  console.log(`Found ${lectureList.length} video lectures.`);
+    const courseId = await extractCourseId(courseUrl, cookieHeader);
+    console.log(`Course ID: ${courseId}`);
 
-  // Filter by startFrom (flat position in full lecture list)
-  const filtered = startFrom > 1
-    ? lectureList.filter((_, i) => i + 1 >= startFrom)
-    : lectureList;
+    const lectureList = await fetchCurriculum(udemyBase, courseId, cookieHeader);
+    console.log(`Found ${lectureList.length} video lectures.`);
 
-  // Build or load manifest — on resume, pending lectures are whatever wasn't finished
-  const mf = loadOrCreate(outputDir, courseId, filtered);
+    // Filter by startFrom (flat position in full lecture list)
+    const filtered = startFrom > 1
+      ? lectureList.filter((_, i) => i + 1 >= startFrom)
+      : lectureList;
 
-  // Generate CONTENTS.txt (course structure overview)
-  generateContentsFile(outputDir, courseId, lectureList);
+    // Build or load manifest — on resume, pending lectures are whatever wasn't finished
+    const mf = loadOrCreate(outputDir, courseId, filtered);
 
-  // Register SIGINT so Ctrl+C prints report before exit
-  process.on('SIGINT', () => {
-    console.log('\nInterrupted.');
+    // Generate CONTENTS.txt (course structure overview)
+    generateContentsFile(outputDir, courseId, lectureList);
+
+    // Register SIGINT so Ctrl+C prints report before exit
+    process.on('SIGINT', () => {
+      console.log('\nInterrupted.');
+      printReport(mf);
+      process.exit(0);
+    });
+
+    await runDownloads(outputDir, mf, cookieHeader);
     printReport(mf);
-    process.exit(0);
-  });
-
-  await runDownloads(outputDir, mf, cookieHeader);
-  printReport(mf);
+  } finally {
+    rl.close();
+  }
 }
 
 main().catch(err => {
