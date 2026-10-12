@@ -36,6 +36,7 @@ function fetchRaw(url, cookieHeader) {
 /** Convert VTT text to plain markdown (strip header, timestamps, cue IDs). */
 function vttToMarkdown(vtt) {
   return vtt
+    .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     .replace(/^WEBVTT[^\n]*\n/, '')
     .replace(/^NOTE[^\n]*\n[\s\S]*?(?=\n\n|$)/gm, '')
     .split(/\n{2,}/)
@@ -118,6 +119,10 @@ async function runDownloads(outputDir, mf, cookieHeader) {
         }
 
         const markdown = vttToMarkdown(body);
+        if (!markdown) {
+          lastErr = new Error('empty transcript body');
+          continue;
+        }
         const filename = sanitize(`${lecture.sectionIndex}.${lecture.lectureIndex} ${lecture.title}`) + '.md';
         const filePath = path.join(courseDir, filename);
         const tmp = filePath + '.tmp';

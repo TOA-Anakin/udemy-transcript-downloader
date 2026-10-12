@@ -94,29 +94,52 @@ async function loginAndGetCookies({ email, isEnterprise, udemyBase, rl }) {
  */
 async function extractCourseId(courseUrl, cookieHeader) {
   const https = require('node:https');
-  return new Promise((resolve, reject) => {
-    const req = https.get(courseUrl, {
-      headers: {
-        Cookie: cookieHeader,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        Accept: 'text/html,application/xhtml+xml',
-      },
-    }, res => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        const html = Buffer.concat(chunks).toString('utf8');
-        const match = html.match(/data-clp-course-id="(\d+)"/);
-        if (match) return resolve(match[1]);
-        // Fallback: try JSON-LD / meta patterns
-        const metaMatch = html.match(/"courseId"\s*:\s*"?(\d+)"?/);
-        if (metaMatch) return resolve(metaMatch[1]);
-        reject(new Error('Could not extract course ID from course page. Ensure you are enrolled.'));
+  const http = require('node:http');
+
+  function fetchFollowRedirects(url, maxRedirects = 5) {
+    return new Promise((resolve, reject) => {
+      const parsed = new URL(url);
+      const lib = parsed.protocol === 'https:' ? https : http;
+      const req = lib.get(url, {
+        headers: {
+          Cookie: cookieHeader,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+      }, res => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+          if (maxRedirects <= 0) return reject(new Error('Too many redirects'));
+          const next = new URL(res.headers.location, url).href;
+          res.resume();
+          return fetchFollowRedirects(next, maxRedirects - 1).then(resolve, reject);
+        }
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, html: Buffer.concat(chunks).toString('utf8') }));
       });
+      req.on('error', reject);
+      req.setTimeout(30000, () => req.destroy(new Error('Timeout fetching course page')));
     });
-    req.on('error', reject);
-    req.setTimeout(30000, () => req.destroy(new Error('Timeout fetching course page')));
-  });
+  }
+
+  const { status, html } = await fetchFollowRedirects(courseUrl);
+
+  const match = html.match(/data-clp-course-id="(\d+)"/);
+  if (match) return match[1];
+  const metaMatch = html.match(/"courseId"\s*:\s*"?(\d+)"?/);
+  if (metaMatch) return metaMatch[1];
+  // Extra pattern for Udemy's server-side data blob
+  const udMatch = html.match(/"id"\s*:\s*(\d{5,})/);
+  if (udMatch) return udMatch[1];
+  // Course ID appears in the course image CDN URL (always present in SSR HTML)
+  // e.g. /course/480x270/6367439_e989_2.jpg
+  const imgMatch = html.match(/\/course\/\d+x\d+\/(\d+)[_/.]/);
+  if (imgMatch) return imgMatch[1];
+
+  // Dump debug info so the user can see what the page actually returned
+  console.error(`\n[debug] HTTP ${status} for ${courseUrl}`);
+  console.error('[debug] HTML snippet (first 2000 chars):\n' + html.slice(0, 2000));
+  throw new Error('Could not extract course ID from course page. Ensure you are enrolled.');
 }
 
 module.exports = { loginAndGetCookies, extractCourseId };
