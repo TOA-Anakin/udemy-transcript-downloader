@@ -68,14 +68,19 @@ async function runDownloads(outputDir, mf, cookieHeader) {
   const courseDir = path.join(outputDir, mf.courseId);
   fs.mkdirSync(courseDir, { recursive: true });
 
-  const pending = mf.lectures.filter(l => l.status === 'pending');
-  console.log(`\nDownloading transcripts: ${pending.length} pending, ${mf.lectures.length} total.\n`);
+  const pending = mf.lectures.filter(l => l.status === 'pending' || l.status === 'failed');
+  console.log(`\nDownloading transcripts: ${pending.length} to process, ${mf.lectures.length} total.\n`);
 
   for (const lecture of pending) {
     if (lecture.captionUrl === null) {
       console.log(`[no_captions] ${lecture.sectionIndex}.${lecture.lectureIndex} ${lecture.title}`);
       manifest.update(outputDir, mf, lecture.id, 'no_captions');
       continue;
+    }
+
+    // Reset failed→pending so a mid-run interrupt leaves it retriable
+    if (lecture.status === 'failed') {
+      manifest.update(outputDir, mf, lecture.id, 'pending');
     }
 
     let lastErr = null;
