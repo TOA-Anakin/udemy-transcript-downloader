@@ -1,17 +1,15 @@
 # Udemy Transcript Downloader
 
-A NodeJS-based tool for downloading transcripts from Udemy courses. This script uses Puppeteer to navigate through Udemy's UI and extract transcripts for each lecture in a course.
+A NodeJS-based tool for downloading transcripts from Udemy courses. This script uses Puppeteer for authentication, then fetches transcripts via the Udemy API.
 
 ## Features
 
 - Downloads transcripts from any Udemy course you have access to
 - Creates individual transcript files for each lecture
-- Generates a combined transcript file with all lectures
-- Optionally downloads `.srt` files with timestamps for each lecture
 - Scrapes and saves course content structure
 - Supports email-based authentication with verification code
 - Handles Cloudflare security challenges
-- Runs in headless mode for better performance
+- Manifest-based resume: skips already-downloaded lectures on re-run
 
 ## Prerequisites
 
@@ -39,47 +37,46 @@ A NodeJS-based tool for downloading transcripts from Udemy courses. This script 
 
 ## Usage
 
-Run the script with the URL of the Udemy course as an argument:
-
-```
-npm start "https://www.udemy.com/course/your-course-url/"
-```
-
-Or use the direct Node.js command:
-
-```
-node src/index.js "https://www.udemy.com/course/your-course-url/"
+```bash
+node src/index.js "https://www.udemy.com/course/your-course/"
 ```
 
 The script will:
-
-1. Ask if you want to download `.srt` files (with timestamps) for each lecture
-2. Ask how many tabs to use for downloading transcripts (default is 5)
-   - A higher number can speed things up, but requires a good PC (enough CPU and RAM)
-3. Open a headless browser and navigate to Udemy login
-4. Fill in your email from the .env file
-5. Ask you to enter the 6-digit verification code from your email
-6. Navigate to the course page
-7. Scrape course content structure
-8. Enter the course player
-9. Go through each lecture and download available transcripts
-10. Save individual transcript files in the `output` directory
+1. Ask which lecture index to start from (default 1)
+2. Open a browser for login (email verification code or SSO — complete in the browser window)
+3. Close the browser once authenticated
+4. Fetch the full course curriculum via the Udemy API (paginated, handles >200 lectures)
+5. Create or load `output/<courseId>/manifest.json`
+6. Download each lecture transcript sequentially, with retries and backoff
+7. Save plain-text `.md` files to `output/<courseId>/`
+8. Print a completeness report on finish or Ctrl+C
 
 ## Output Files
 
-All output files are saved to the `output` directory:
+All output is saved under `output/<courseId>/`:
 
-- `CONTENTS.txt` - Course structure with sections and lectures
-- `[Lecture Name].txt` - Individual transcript files for each lecture
-- `[Lecture Name].srt` - Individual transcript files with timestamps in SubRip format (optional)
+- `manifest.json` — tracks status per lecture: `pending`, `success`, `no_captions`, `failed`
+- `CONTENTS.txt` — full course outline
+- `<section>.<index> <title>.md` — plain-text transcript per lecture
+
+## Resuming
+
+Re-run with the same course URL. Lectures already marked `success` or `no_captions` are skipped automatically. Only `pending` and `failed` lectures are retried.
+
+## Completeness Report
+
+Printed at the end of every run (or immediately on Ctrl+C). Lists:
+- All lectures with no available captions
+- All lectures that failed after retries (safe to retry by re-running)
+- Any lectures still pending (run was interrupted mid-way)
 
 ## Troubleshooting
 
 - **Verification Code Issues**: Make sure to enter the verification code quickly after receiving it in your email
 - **Browser Crashing**: If you experience issues with headless mode, you can modify the script to use `headless: false` for debugging
-- **Missing Transcripts**: Not all lectures may have transcripts. The script will create empty files for lectures without transcripts.
-- **SRT Errors**: If `.srt` generation fails for a lecture, try increasing timeouts or re-running the script with fewer browser tabs open.
-- **Slow Transcript Downloads**: The script can download transcripts in parallel using multiple browser tabs. If your PC is slow or has limited memory, stick to a lower number of tabs (e.g. 1–3). If you have a powerful machine, you can safely use 5 or more tabs for faster processing.
+- **Missing Transcripts**: Lectures without captions are marked `no_captions` in the manifest and listed in the completeness report. This is expected for some lectures.
+- **Failed Downloads**: Re-run the script — only `pending` and `failed` lectures will be retried.
+- **Course ID Not Found**: Make sure you are enrolled in the course and the URL is correct.
 
 ## License
 
